@@ -1,0 +1,5 @@
+*.swp
+derby.log
+dynamodb-local/
+metastore_db/
+target/
