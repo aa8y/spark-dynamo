@@ -3,19 +3,50 @@ package co.aa8y.spark.sql.datasource.dynamojson
 import org.apache.spark.sql.types.{ ArrayType, BooleanType, ByteType, DecimalType, LongType }
 import org.apache.spark.sql.types.{ DoubleType, MapType, NullType, StringType }
 import org.apache.spark.sql.types.{ DataType, StructField, StructType }
-import com.fasterxml.jackson.core._
+import com.fasterxml.jackson.core.JsonFactory
 import org.scalatest.FunSpec
 
 class InferSchemaSpec extends FunSpec {
   describe("InferSchema") {
     describe("inferField()") {
-      it("should parse dynamo json") {
-        val parser = new JsonFactory().createParser("""{"id":{"n":"1"},"name":{"s":"Doe, John"}}""")
-        parser.nextToken
-        val computedType = InferSchema.inferField(parser, new JSONOptions(Map()))
+      def inferField(dynamoJson: String): DataType = {
+        val parser = new JsonFactory().createParser(dynamoJson)
+        parser.nextToken // First token is always null.
+        InferSchema.inferField(parser, new JSONOptions(Map()))
+      }
+      it("should parse Dynamo JSON with a single field.") {
+        val computedType = inferField("""{"id": {"n": "1"}}""")
         val expectedType = StructType(Array(
-          StructField("id", DoubleType, true), StructField("name", StringType, true))
-        )
+          StructField("id", DoubleType, true)
+        ))
+        assert(computedType === expectedType)
+      }
+      it("should parse Dynamo JSON with multiple fields, all primitive types.") {
+        val computedType = inferField("""{"id": {"n": "1"}, "name": {"s": "Doe, John"},""" +
+          """"is_admin": {"bOOL": "true"}, "gender": {"nULL": "true"}}""")
+        val expectedType = StructType(Array(
+          StructField("id", DoubleType, true),
+          StructField("name", StringType, true),
+          StructField("is_admin", BooleanType, true),
+          StructField("gender", NullType, true)
+        ))
+        assert(computedType === expectedType)
+      }
+      it("should parse Dynamo JSON with map type.") {
+        val computedType = inferField("""{"id": {"n": "1"},""" +
+          """"name": {"m": {"first_name": {"s": "John"}, "last_name": {"s": "Doe"}}},""" +
+          """"height": {"m": {"unit": {"s": "centimeters"}, "value": {"n": "158"}}}}""")
+        val expectedType = StructType(Array(
+          StructField("id", DoubleType, true),
+          StructField("name", StructType(Array(
+            StructField("first_name", StringType, true),
+            StructField("last_name", StringType, true)
+          )), true),
+          StructField("height", StructType(Array(
+            StructField("unit", StringType, true),
+            StructField("value", DoubleType, true)
+          )), true)
+        ))
         assert(computedType === expectedType)
       }
     }

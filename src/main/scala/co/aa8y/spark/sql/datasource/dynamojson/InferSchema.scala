@@ -100,6 +100,7 @@ private[sql] object InferSchema {
           }
 					StructType(fields)
       }
+      case _ => StructType(fields)
     }
     case _ => StructType(fields)
   }
