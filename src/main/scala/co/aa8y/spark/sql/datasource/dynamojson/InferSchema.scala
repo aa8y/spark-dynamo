@@ -2,8 +2,11 @@ package co.aa8y.spark.sql.datasource.dynamojson
 
 import java.util.Comparator
 
+import scala.annotation.tailrec
+
 import com.fasterxml.jackson.core.{ JsonParser, JsonToken }
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.catalyst.analysis.TypeCoercion
 import org.apache.spark.sql.types.{ ArrayType, BooleanType, ByteType, DecimalType, LongType }
 import org.apache.spark.sql.types.{ DoubleType, MapType, NullType, StringType }
 import org.apache.spark.sql.types.{ DataType, StructField, StructType }
@@ -61,7 +64,6 @@ private[sql] object InferSchema {
         val fields = builder.result.sortWith((l, r) => l.name < r.name)
         inferDynamoType(fields)
 
-      /*
       case START_ARRAY =>
         // If this JSON array is empty, we use NullType as a placeholder.
         // If this array is not empty in other JSON objects, we can resolve
@@ -71,7 +73,6 @@ private[sql] object InferSchema {
           elementType = compatibleType(elementType, inferField(parser, configOpts))
         }
         ArrayType(elementType)
-        */
     }
   }
 
@@ -105,5 +106,75 @@ private[sql] object InferSchema {
       case _ => StructType(fields)
     }
     case _ => StructType(fields)
+  }
+
+  def compatibleType(t1: DataType, t2: DataType): DataType = {
+    TypeCoercion.findTightestCommonTypeOfTwo(t1, t2).getOrElse {
+      // t1 or t2 is a StructType, ArrayType, or an unexpected type.
+      (t1, t2) match {
+        // Double support larger range than fixed decimal, DecimalType.Maximum should be enough
+        // in most case, also have better precision.
+        case (DoubleType, _: DecimalType) | (_: DecimalType, DoubleType) => DoubleType
+
+        case (t1: DecimalType, t2: DecimalType) =>
+          val scale = math.max(t1.scale, t2.scale)
+          val range = math.max(t1.precision - t1.scale, t2.precision - t2.scale)
+          // DecimalType can't support precision > 38
+          if (range + scale > 38) DoubleType
+          else DecimalType(range + scale, scale)
+
+        case (StructType(fields1), StructType(fields2)) =>
+          // Both fields1 and fields2 should be sorted by name, since inferField performs sorting.
+          // Therefore, we can take advantage of the fact that we're merging sorted lists and skip
+          // building a hash map or performing additional sorting.
+          assert(isSorted(fields1), s"StructType's fields were not sorted: ${fields1.toSeq}")
+          assert(isSorted(fields2), s"StructType's fields were not sorted: ${fields2.toSeq}")
+
+          val newFields = new java.util.ArrayList[StructField]()
+
+          var f1Idx = 0
+          var f2Idx = 0
+
+          while (f1Idx < fields1.length && f2Idx < fields2.length) {
+            val f1Name = fields1(f1Idx).name
+            val f2Name = fields2(f2Idx).name
+            val comp = f1Name.compareTo(f2Name)
+            if (comp == 0) {
+              val dataType = compatibleType(fields1(f1Idx).dataType, fields2(f2Idx).dataType)
+              newFields.add(StructField(f1Name, dataType, nullable = true))
+              f1Idx += 1
+              f2Idx += 1
+            } else if (comp < 0) { // f1Name < f2Name
+              newFields.add(fields1(f1Idx))
+              f1Idx += 1
+            } else { // f1Name > f2Name
+              newFields.add(fields2(f2Idx))
+              f2Idx += 1
+            }
+          }
+          while (f1Idx < fields1.length) {
+            newFields.add(fields1(f1Idx))
+            f1Idx += 1
+          }
+          while (f2Idx < fields2.length) {
+            newFields.add(fields2(f2Idx))
+            f2Idx += 1
+          }
+          StructType(newFields.toArray(Array.empty[StructField]))
+
+        case (ArrayType(elementType1, containsNull1), ArrayType(elementType2, containsNull2)) =>
+          ArrayType(compatibleType(elementType1, elementType2), containsNull1 || containsNull2)
+
+        // strings and every string is a Json object.
+        case (_, _) => StringType
+      }
+    }
+  }
+
+  @tailrec
+  private def isSorted(fields: Array[StructField]): Boolean = fields match {
+    case f if f.size <= 1 => true
+    case Array(f1, f2, _*) if (f1.name < f2.name) => isSorted(fields.drop(2))
+    case _ => false
   }
 }

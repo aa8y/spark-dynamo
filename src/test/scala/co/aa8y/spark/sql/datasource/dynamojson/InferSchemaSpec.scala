@@ -88,7 +88,6 @@ class InferSchemaSpec extends FunSpec {
         ))
         assert(computedType === expectedType)
       }
-      /*
       it("should parse Dynamo JSON with Dynamo maps and sets.") {
         val computedType = inferField("""
           |{
@@ -113,14 +112,14 @@ class InferSchemaSpec extends FunSpec {
           |}
         """.stripMargin)
         val expectedType = StructType(Array(
+          StructField("height", StructType(Array(
+            StructField("unit", StringType, true),
+            StructField("value", DoubleType, true)
+          )), true),
           StructField("id", DoubleType, true),
           StructField("name", StructType(Array(
             StructField("first_name", StringType, true),
             StructField("last_name", StringType, true)
-          )), true),
-          StructField("height", StructType(Array(
-            StructField("unit", StringType, true),
-            StructField("value", DoubleType, true)
           )), true),
           StructField("skills", StructType(Array(
             StructField("programming", ArrayType(StringType, true), true)
@@ -128,7 +127,6 @@ class InferSchemaSpec extends FunSpec {
         ))
         assert(computedType === expectedType)
       }
-      */
     }
   }
 }
