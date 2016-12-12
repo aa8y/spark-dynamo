@@ -56,7 +56,9 @@ private[sql] object InferSchema {
           val fieldType = inferField(parser, configOpts)
           builder += StructField(fieldName, fieldType, nullable = true)
         }
-        val fields = builder.result
+        // Keys in JSON objects are not ordered. Sort the key/field names lexicographically
+        // to make sure each JSON line gives us the field names in the same order.
+        val fields = builder.result.sortWith((l, r) => l.name < r.name)
         inferDynamoType(fields)
 
       /*
