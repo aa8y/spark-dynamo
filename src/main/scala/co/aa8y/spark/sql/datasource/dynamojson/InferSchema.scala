@@ -130,37 +130,16 @@ private[sql] object InferSchema {
           assert(isSorted(fields1), s"StructType's fields were not sorted: ${fields1.toSeq}")
           assert(isSorted(fields2), s"StructType's fields were not sorted: ${fields2.toSeq}")
 
-          val newFields = new java.util.ArrayList[StructField]()
-
-          var f1Idx = 0
-          var f2Idx = 0
-
-          while (f1Idx < fields1.length && f2Idx < fields2.length) {
-            val f1Name = fields1(f1Idx).name
-            val f2Name = fields2(f2Idx).name
-            val comp = f1Name.compareTo(f2Name)
-            if (comp == 0) {
-              val dataType = compatibleType(fields1(f1Idx).dataType, fields2(f2Idx).dataType)
-              newFields.add(StructField(f1Name, dataType, nullable = true))
-              f1Idx += 1
-              f2Idx += 1
-            } else if (comp < 0) { // f1Name < f2Name
-              newFields.add(fields1(f1Idx))
-              f1Idx += 1
-            } else { // f1Name > f2Name
-              newFields.add(fields2(f2Idx))
-              f2Idx += 1
+          val mergedFields = mergeSorted(fields1, fields2)
+            .sortWith((l, r) => l.name < r.name)
+            .foldLeft(Vector[StructField]()) { (merged, next) =>
+              if (merged.isEmpty) merged :+ next
+              else if (merged.last.name == next.name) {
+                val dataType = compatibleType(merged.last.dataType, next.dataType)
+                merged.dropRight(1) :+ StructField(next.name, dataType, nullable = true)
+              } else merged :+ next
             }
-          }
-          while (f1Idx < fields1.length) {
-            newFields.add(fields1(f1Idx))
-            f1Idx += 1
-          }
-          while (f2Idx < fields2.length) {
-            newFields.add(fields2(f2Idx))
-            f2Idx += 1
-          }
-          StructType(newFields.toArray(Array.empty[StructField]))
+          StructType(mergedFields)
 
         case (ArrayType(elementType1, containsNull1), ArrayType(elementType2, containsNull2)) =>
           ArrayType(compatibleType(elementType1, elementType2), containsNull1 || containsNull2)
@@ -169,6 +148,17 @@ private[sql] object InferSchema {
         case (_, _) => StringType
       }
     }
+  }
+
+  @tailrec
+  private def mergeSorted(l: Array[StructField], r: Array[StructField])(
+    implicit acc: List[StructField] = Nil
+  ): List[StructField] = {
+    if (l.isEmpty) acc ++ r
+    else if (r.isEmpty) acc ++ l
+    else if (l.head.name < r.head.name) mergeSorted(l.tail, r)(acc :+ l.head)
+    else if (l.head.name > r.head.name) mergeSorted(l, r.tail)(acc :+ r.head)
+    else mergeSorted(l.tail, r.tail)(acc :+ l.head :+ r.head)
   }
 
   @tailrec
